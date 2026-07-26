@@ -1,0 +1,56 @@
+﻿# =========================
+# NaraEyes Agent - Config
+# (UTF-8, lines: key=value)
+# =========================
+
+# ---------- سرور ----------
+ApiBase=https://atmon.sbank.ir/api
+PingTarget=https://atmon.sbank.ir/api
+
+# ---------- مسیرها ----------
+JournalPath=D:\ejournal
+EJournalRoot=D:\ejournal
+EJournalFallback=D:\ejournal
+LogDir=C:\ProgramData\NaraEyes\logs
+TerminalCode=0
+
+# ---------- لاگ ----------
+LogLevel=Info           ; Trace|Debug|Info|Warn|Error
+MaxLogSizeKb=0
+
+# ---------- پول و لانگ‌پول ----------
+PollWaitSeconds=45      ; سرور تا این مدت پاسخ نداده=Timeout طبیعی
+PollJitterSeconds=15    ; برای پخش شدن بار
+
+# ---------- متریک‌ها ----------
+MetricsIntervalSec=180  ; بازهٔ اصلی ارسال متریک
+MetricsJitterSec=20     ; نویز زمان‌بندی
+MetricsMinSec=30        ; حداقل فاصلهٔ ارسال
+
+# ---------- اسکرین‌شات ----------
+ScreenshotQuality=85    ; 1..100 برای JPEG
+ScreenshotMaxWidth=1600
+ScreenshotMaxHeight=900
+
+# ---------- XFS (نام لاجیکال‌ها) ----------
+CdmLogical=CashDispenser
+IdcLogical=CardReader
+PtrLogical=ReceiptPrinter
+SiuLogical=Sensors
+CameraLogical=Cameras
+PinLogical=Encryptor
+
+# ---------- Agent ----------
+Mode=Silent             ; Silent | Technician
+Tray=1                  ; 1=Tray فعال، 0=غیرفعال
+AllowExit=0             ; 0=اجازه خروج نداره (پیشنهادی روی ATM)
+
+# ---------- شبکه/پراکسی (اختیاری) ----------
+ProxyEnabled=0
+ProxyUrl=
+ProxyUser=
+ProxyPass=
+
+# ---------- امنیت (اختیاری) ----------
+mTLS=0                  ; 1=فعال، 0=غیرفعال
+EnrollmentToken=
