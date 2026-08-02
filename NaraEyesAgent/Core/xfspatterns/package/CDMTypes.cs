@@ -36,11 +36,11 @@ namespace NaraEyesAgent.Core.XFSPatterns.package
             public ushort fwIntermediateStacker;
             public IntPtr lppPositions;   // LPWFSCDMOUTPOS*
             public IntPtr lpszExtra;      // LPSTR
-            [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
-            public uint[] dwGuidLights;
-            public ushort wDevicePosition;
-            public ushort usPowerSaveRecoveryTime;
-            public ushort wAntiFraudModule;
+            //[MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
+            //public uint[] dwGuidLights;
+            //public ushort wDevicePosition;
+            //public ushort usPowerSaveRecoveryTime;
+            //public ushort wAntiFraudModule;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = XFSConstants.STRUCTPACKSIZE, CharSet = XFSConstants.CHARSET)]
@@ -63,9 +63,9 @@ namespace NaraEyesAgent.Core.XFSPatterns.package
             [MarshalAs(UnmanagedType.Bool)]
             public bool bHardwareSensor;
 
-            public uint ulDispensedCount;
-            public uint ulPresentedCount;
-            public uint ulRetractedCount;
+            //public uint ulDispensedCount;
+            //public uint ulPresentedCount;
+            //public uint ulRetractedCount;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = XFSConstants.STRUCTPACKSIZE, CharSet = XFSConstants.CHARSET)]
@@ -95,9 +95,9 @@ namespace NaraEyesAgent.Core.XFSPatterns.package
             public ushort usNumPhysicalCUs;
             public IntPtr lppPhysical;              // WFSCDMPHCU**
 
-            public uint ulDispensedCount;
-            public uint ulPresentedCount;
-            public uint ulRetractedCount;
+            //public uint ulDispensedCount;
+            //public uint ulPresentedCount;
+            //public uint ulRetractedCount;
         }
 
         [StructLayout(LayoutKind.Sequential, Pack = XFSConstants.STRUCTPACKSIZE, CharSet = XFSConstants.CHARSET)]

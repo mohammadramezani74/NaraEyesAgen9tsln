@@ -11,6 +11,7 @@ namespace NaraEyesAgent.Core.XFSServices
     public static class OpenModuleService
     {
         public const int XFS_VER_303 = 0x00030003;
+      //  public const int XFS_VER_303 = 0x1E030003;
         public const int WFS_SUCCESS = 0;
 
         // کلاس‌های ایونت برای Register (bitmask)
@@ -55,84 +56,72 @@ namespace NaraEyesAgent.Core.XFSServices
         }
         public static void openAllModules()
         {
-            
-            //SafeLog("XFSStartUp...");
             var verApi = new WFSVERSION();
-            XfsApi.WFSStartUp(XFS_VER_303, ref verApi);
+            int hrStart = XfsApi.WFSStartUp(XFS_VER_303, ref verApi);
 
-            // ساخت پنجره‌ی پیام‌ها فقط یک‌بار
+            if (hrStart != WFS_SUCCESS && hrStart != XfsErrors.WFS_ERR_ALREADY_STARTED)
+            {
+                SafeLog($"[XFS] WFSStartUp FAILED hr={hrStart} ({XfsErrorName(hrStart)}). ادامه بی‌فایده است.");
+                return;
+            }
+            SafeLog($"[XFS] Manager v=0x{verApi.wVersion:X4} range=0x{verApi.wLowVersion:X4}..0x{verApi.wHighVersion:X4}");
+            SafeLog($"[XFS] {verApi.szDescription}");
+
             if (_evtWindow == null)
                 _evtWindow = new XfsEventWindow();
 
-            // ——— Camera ———
-            var verSvcCam = new WFSVERSION();
-            var verSpiCam = new WFSVERSION();
-            XfsApi.WFSOpen("Camera", IntPtr.Zero, "XfsConsole", 0, 6000, XFS_VER_303,
-                           ref verSvcCam, ref verSpiCam, ref hCam);
-            if (hCam != 0)
-            {
-                Console.WriteLine("Camera is Open ed");
-            }
-            TryRegister("Camera", hCam);
+            hCam = OpenOne("Camera", 6000);
+            hPin = OpenOne("Encryptor", 6000);
+            hCdm = OpenOne("CashDispenser", 6000);   // ← قبلاً ۱۰۰۰ بود
+            hIdc = OpenOne("CardReader", 6000);
+            hPtr = OpenOne("ReceiptPrinter", 6000);
+            hSiu = OpenOne("Sensors", 6000);
 
-            // ——— PinPad ———
-            var verSvcPin = new WFSVERSION();
-            var verSpiPin = new WFSVERSION();
-            XfsApi.WFSOpen("Encryptor", IntPtr.Zero, "XfsConsole", 0, 6000, XFS_VER_303,
-                           ref verSvcPin, ref verSpiPin, ref hPin);
-            TryRegister("Encryptor", hPin);
-            if (hPin != 0)
-            {
-                Console.WriteLine("Pin is Open ed");
-            }
+            SafeLog("[XFS] Open sequence finished.");
+        }
 
-            // ——— CDM ———
-            var verSvcCdm = new WFSVERSION();
-            var verSpiCdm = new WFSVERSION();
-            XfsApi.WFSOpen("CashDispenser", IntPtr.Zero, "XfsConsole", 0, 1000, XFS_VER_303,
-                           ref verSvcCdm, ref verSpiCdm, ref hCdm);
-            Console.WriteLine("openSuccess");
-            TryRegister("CashDispenser", hCdm);
-            if (hCdm != 0)
+        private static ushort OpenOne(string logicalName, int timeoutMs)
+        {
+            var verSvc = new WFSVERSION();
+            var verSpi = new WFSVERSION();
+            ushort h = 0;
+
+            int hr = XfsApi.WFSOpen(logicalName, IntPtr.Zero, "NaraEyesAgent", 0, timeoutMs,
+                                    XFS_VER_303, ref verSvc, ref verSpi, ref h);
+
+            if (hr != WFS_SUCCESS || h == 0)
             {
-                Console.WriteLine("Cdm is Open ed");
+                SafeLog($"[{logicalName}] WFSOpen FAILED hr={hr} ({XfsErrorName(hr)})");
+                return 0;
             }
 
-            // ——— IDC ———
-            var verSvcIdc = new WFSVERSION();
-            var verSpiIdc = new WFSVERSION();
-            XfsApi.WFSOpen("CardReader", IntPtr.Zero, "XfsConsole", 0, 6000, XFS_VER_303,
-                           ref verSvcIdc, ref verSpiIdc, ref hIdc);
-            TryRegister("CardReader", hIdc);
-            if (hIdc != 0)
-            {
-                Console.WriteLine($"idc: {hIdc}");
-                Console.WriteLine("IDC is Open ed");
-            }
-            // ——— PTR ———
-            var verSvcPtr = new WFSVERSION();
-            var verSpiPtr = new WFSVERSION();
-            XfsApi.WFSOpen("ReceiptPrinter", IntPtr.Zero, "XfsConsole", 0, 6000, XFS_VER_303,
-                           ref verSvcPtr, ref verSpiPtr, ref hPtr);
-            TryRegister("ReceiptPrinter", hPtr);
-            if (hPtr != 0)
-            {
-                Console.WriteLine("printer is opened");
-            }
-            // ——— SIU ———
-            var verSvcSiu = new WFSVERSION();
-            var verSpiSiu = new WFSVERSION();
-            XfsApi.WFSOpen("Sensors", IntPtr.Zero, "XfsConsole", 0, 6000, XFS_VER_303,
-                           ref verSvcSiu, ref verSpiSiu, ref hSiu);
-            TryRegister("Sensors", hSiu);
-            if (hSiu != 0)
-            {
-                Console.WriteLine("Sensors is opened");
-            }
+            SafeLog($"[{logicalName}] OPEN ok  h={h}  svc=0x{verSvc.wVersion:X4}  spi=0x{verSpi.wVersion:X4}");
+            SafeLog($"[{logicalName}] {verSvc.szDescription}");
+            TryRegister(logicalName, h);
+            return h;
+        }
 
-       
-
-            SafeLog("Installation is Done.");
+        private static string XfsErrorName(int hr)
+        {
+            switch (hr)
+            {
+                case -3: return "API_VER_TOO_LOW";
+                case -2: return "API_VER_TOO_HIGH";
+                case -34: return "NO_SERVPROV";
+                case -39: return "NOT_STARTED";
+                case -43: return "SERVICE_NOT_FOUND";
+                case -44: return "SPI_VER_TOO_HIGH";
+                case -45: return "SPI_VER_TOO_LOW";
+                case -46: return "SRVC_VER_TOO_HIGH";
+                case -47: return "SRVC_VER_TOO_LOW";
+                case -48: return "TIMEOUT";
+                case -32: return "LOCKED";
+                case -22: return "INVALID_HSERVICE";
+                case -13: return "DEV_NOT_READY";
+                case -14: return "HARDWARE_ERROR";
+                case -54: return "CONNECTION_LOST";
+                default: return "hr=" + hr;
+            }
         }
 
         private static void TryRegister(string logicalName, ushort hService)
@@ -148,13 +137,9 @@ namespace NaraEyesAgent.Core.XFSServices
 
             int hr = XfsApi.WFSRegister(hService, ALL_EVENTS, _evtWindow.Handle);
             if (hr != WFS_SUCCESS)
-            {
-
-            }
+                SafeLog($"[{logicalName}] WFSRegister FAILED hr={hr} ({XfsErrorName(hr)})");
             else
-            {
                 SafeLog($"[{logicalName}] WFSRegister OK.");
-            }
         }
 
 

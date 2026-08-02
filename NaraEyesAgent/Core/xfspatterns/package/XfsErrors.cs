@@ -7,6 +7,7 @@ namespace NaraEyesAgent.Core.XFSPatterns.package
 {
     public static class XfsErrors
     {
+        public const int WFS_ERR_ALREADY_STARTED = -1;
         public const int WFS_SUCCESS = 0;
         public const int WFS_ERR_HARDWARE_ERROR = -14;
         public const int WFS_ERR_INTERNAL_ERROR = -15;

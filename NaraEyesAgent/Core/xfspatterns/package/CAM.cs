@@ -75,7 +75,7 @@ namespace NaraEyesAgent.Core.XFSPatterns.package
                 public ushort[] usPictures;
 
                 public IntPtr lpszExtra;
-                public ushort wAntiFraudModule;
+                //public ushort wAntiFraudModule;
             }
 
             [StructLayout(LayoutKind.Sequential, Pack = 1)]

@@ -56,6 +56,7 @@ namespace NaraEyesAgent.Core.XFSPatterns.package
         public const ushort WFS_SIU_QUICK_FLASH = 0x0010;
         public const ushort WFS_SIU_CONTINUOUS = 0x0080;
     }
+    [StructLayout(LayoutKind.Sequential, Pack = 1, CharSet = CharSet.Ansi)]
     struct WFSSIUSTATUS
     {
         public ushort fwDevice;

@@ -8,6 +8,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Runtime.Intrinsics.Arm;
 using System.Text;
 using System.Windows.Forms.Design;
 using static System.Windows.Forms.VisualStyles.VisualStyleElement;
@@ -26,13 +27,18 @@ namespace NaraEyesAgent.Core.XFSServices
         const int WFS_STAT_DEVFRAUDATTEMPT = 7;
         const int WFS_STAT_DEVPOTENTIALFRAUD = 8;
         public const int WFS_SUCCESS = 0;
+        // TODO: انتقال به Config.txt
+        private const string HostCheckIp = "10.119.254.69";
+        private const int HostCheckPort = 8001;
+        private const long MoneyWarningThreshold = 20_000_000;
         public static void ResteCdm()
         {
+            var cdm = OpenModuleService.hCdm;
             try
             {
 
 
-                var cdm = OpenModuleService.hCdm;
+            
                 Console.WriteLine($"hcdm given {cdm}");
                 IntPtr pLock = IntPtr.Zero;
                 int hrLock = XfsApi.WFSLock(cdm, 15000, ref pLock);
@@ -51,6 +57,10 @@ namespace NaraEyesAgent.Core.XFSServices
             {
 
                 throw;
+            }
+            finally
+            {
+                XfsApi.WFSUnlock(cdm);   // حتماً در finally
             }
         }
         public static void ReseteIDC()
@@ -112,213 +122,309 @@ namespace NaraEyesAgent.Core.XFSServices
         }
         public static DeviceMuduleStatusCommand GetCassetInfo()
         {
-            bool inserviseSituation = false;
             bool HaveError = false;
             bool PinEror = false;
             bool InService = false;
-            bool outOfService = false;
             bool online = false;
             bool offline = false;
 
             var command = new DeviceMuduleStatusCommand();
+
+            // پیش‌فرض‌های امن — تا هیچ‌جای متد NullReference نگیریم
+            command.CdmStatus = new CdmStatusDto { Device = 0, Dispenser = 0, IntermediateStacker = 0, SafeDoor = 0 };
+            command.IdcStatus = new models.Module.IdcStatusDto { Device = 0, ChipPower = 0, Media = 0, RetainBin = 0, usCards = 0 };
+            command.ptrStatus = new PtrStatusDto { Device = 0, Media = 0, Ink = 0, Toner = 0, Paper = PaperStatus.Unknown };
+            command.PinStatus = new PinStatusDto { Device = 0 };
+            command.SiuStatus = new SiuStatusModel { Device = 0, Doors = new ushort[0], Auxiliaries = new ushort[0], GuidLights = new ushort[0], Indicators = new ushort[0] };
+            command.Cashunit = new List<CashUnitInfo>();
+
+            int hr;
+
+            // ==================== CDM STATUS ====================
+            if (OpenModuleService.EnsureCdmOpen())
+            {
+                CDM.WFSCDMSTATUS st;
+                if (TryGetInfo(OpenModuleService.hCdm, CDM.WFS_INF_CDM_STATUS, 10000, "CDM", out st, out hr))
+                {
+                    command.CdmStatus = new CdmStatusDto
+                    {
+                        Device = st.fwDevice,
+                        Dispenser = st.fwDispenser,
+                        IntermediateStacker = st.fwIntermediateStacker,
+                        SafeDoor = st.fwSafeDoor,
+                    };
+                    if (st.fwDevice != 0 && st.fwDevice != 6) HaveError = true;
+                }
+                else if (OpenModuleService.IsFatalServiceError(hr))
+                {
+                    OpenModuleService.InvalidateCdm();
+                }
+            }
+
+            // ==================== CDM CASH UNITS ====================
             if (OpenModuleService.EnsureCdmOpen())
             {
                 IntPtr pRes = IntPtr.Zero;
                 try
                 {
+                    hr = XfsApi.WFSGetInfo(OpenModuleService.hCdm, CDM.WFS_INF_CDM_CASH_UNIT_INFO,
+                                           IntPtr.Zero, 20000, ref pRes);
 
-
-
-                    XfsApi.WFSGetInfo(OpenModuleService.hCdm, CDM.WFS_INF_CDM_STATUS, IntPtr.Zero, 10000, ref pRes);
-
-                    var res = (WFSRESULT)Marshal.PtrToStructure(pRes, typeof(WFSRESULT));
-                    //Console.WriteLine($"m.hresult = {res.hResult}");
-                    if (res.hResult != WFS_SUCCESS || res.lpBuffer == IntPtr.Zero)
+                    if (hr != XfsErrors.WFS_SUCCESS || pRes == IntPtr.Zero)
                     {
-                        Console.WriteLine($"CDM STATUS failed: 0x{res.hResult:X}");
-
-                        if (OpenModuleService.IsFatalServiceError(res.hResult))
-                        {
+                        Console.WriteLine($"[CDM_CU] WFSGetInfo failed hr={hr}");
+                        if (OpenModuleService.IsFatalServiceError(hr))
                             OpenModuleService.InvalidateCdm();
-                        }
-
-
-                        command.CdmStatus = new CdmStatusDto
-                        {
-                            Device = 0,
-                            Dispenser = 0,
-                            IntermediateStacker = 0,
-                            SafeDoor = 0
-                        };
                     }
                     else
                     {
+                        var res = (WFSRESULT)Marshal.PtrToStructure(pRes, typeof(WFSRESULT));
 
-                        var st = (CDM.WFSCDMSTATUS)Marshal.PtrToStructure(res.lpBuffer, typeof(CDM.WFSCDMSTATUS));
-                        //  Console.WriteLine($"CDM Device={MapDev(st.fwDevice)}  Dispenser={st.fwDispenser}  Stacker={st.fwIntermediateStacker}  SafeDoor={st.fwSafeDoor}");
-                        command.CdmStatus = new CdmStatusDto
+                        if (res.hResult != XfsErrors.WFS_SUCCESS || res.lpBuffer == IntPtr.Zero)
                         {
-                            Device = st.fwDevice,
-                            Dispenser = st.fwDispenser,
-                            IntermediateStacker = st.fwIntermediateStacker,
-                            SafeDoor = st.fwSafeDoor,
-                        };
-                        if (st.fwDevice != 0 && st.fwDevice != 6)
-                        {
-                            HaveError = true;
+                            Console.WriteLine($"[CDM_CU] hResult={res.hResult}");
+                            if (OpenModuleService.IsFatalServiceError(res.hResult))
+                                OpenModuleService.InvalidateCdm();
                         }
-                    }
-                }
-                catch
-                {
-
-                }
-                finally
-                {
-                    if(pRes!=IntPtr.Zero) XfsApi.WFSFreeResult(pRes);
-                }
-            
-            }
-            else
-            {
-                command.CdmStatus = new CdmStatusDto
-                {
-                    Device = 0,
-                    Dispenser = 0,
-                    IntermediateStacker = 0,
-                    SafeDoor = 0
-                };
-            }
-            if (OpenModuleService.EnsureCdmOpen())
-            {
-
-                IntPtr pRes = IntPtr.Zero;
-
-                try
-                {
-                    XfsApi.WFSGetInfo(OpenModuleService.hCdm, CDM.WFS_INF_CDM_CASH_UNIT_INFO, IntPtr.Zero, 20000, ref pRes);
-
-                    var res = (WFSRESULT)Marshal.PtrToStructure(pRes, typeof(WFSRESULT));
-                    if (res.hResult != WFS_SUCCESS || res.lpBuffer == IntPtr.Zero)
-                    {
-                        Console.WriteLine($"CDM CASH_UNIT_INFO failed: 0x{res.hResult:X}");
-
-                        if (OpenModuleService.IsFatalServiceError(res.hResult))
+                        else
                         {
-                            // هندل خراب شده، دفعه بعد دوباره Open می‌کنیم
-                            OpenModuleService.InvalidateCdm();
-                        }
+                            var cuInfo = (CDM.WFSCDMCUINFO)Marshal.PtrToStructure(res.lpBuffer, typeof(CDM.WFSCDMCUINFO));
 
-                      
-                        command.Cashunit = new List<CashUnitInfo>();
-
-                    }
-                    else
-                    {
-                        var cuInfo = (CDM.WFSCDMCUINFO)Marshal.PtrToStructure(res.lpBuffer, typeof(CDM.WFSCDMCUINFO));
-                        command.Cashunit = new List<CashUnitInfo>();
-
-                        for (int i = 0; i < cuInfo.usCount; i++)
-                        {
-                            IntPtr pCu = Marshal.ReadIntPtr(cuInfo.lppList, i * IntPtr.Size);
-                            var cu = (CDM.WFSCDMCASHUNIT)Marshal.PtrToStructure(pCu, typeof(CDM.WFSCDMCASHUNIT));
-
-                            string name = PtrToAnsi(cu.lpszCashUnitName);
-                            string unitId = BytesToAscii(cu.cUnitID);
-                            string cur = BytesToAscii(cu.cCurrencyID);
-
-                            uint denomValue = cu.ulValues;
-
-
-
-                            //Console.WriteLine($"Denome is {denomValue}");
-                            // --- Physicals ---
-                            if (cu.usNumPhysicalCUs > 0 && cu.lppPhysical != IntPtr.Zero)
+                            for (int i = 0; i < cuInfo.usCount; i++)
                             {
-                                //Console.WriteLine($"   Physical CUs: {cu.usNumPhysicalCUs}");
-                                for (int j = 0; j < cu.usNumPhysicalCUs; j++)
+                                IntPtr pCu = Marshal.ReadIntPtr(cuInfo.lppList, i * IntPtr.Size);
+                                if (pCu == IntPtr.Zero) continue;
+
+                                var cu = (CDM.WFSCDMCASHUNIT)Marshal.PtrToStructure(pCu, typeof(CDM.WFSCDMCASHUNIT));
+
+                                string unitId = BytesToAscii(cu.cUnitID);
+                                string cur = BytesToAscii(cu.cCurrencyID);
+
+                                // ⚠ یک رکورد به ازای هر کاست *منطقی* — نه فیزیکی.
+                                // نسخه‌ی قبلی داخل حلقه‌ی physical اضافه می‌کرد و
+                                // موجودی کاست‌های چندفیزیکی را دوبار می‌شمرد،
+                                // و کاست‌های بدون physical را کلاً می‌انداخت.
+                                command.Cashunit.Add(new CashUnitInfo
                                 {
-                                    IntPtr pPh = Marshal.ReadIntPtr(cu.lppPhysical, j * IntPtr.Size);
-                                    var ph = (CDM.WFSCDMPHCU)Marshal.PtrToStructure(pPh, typeof(CDM.WFSCDMPHCU));
-
-                                    
-                                    string phyId = BytesToAscii(ph.cUnitID);
-
-                                    string logicalUnitId = GetUniqueLogicalUnitId(unitId, command.Cashunit);
-                                    command.Cashunit.Add(new CashUnitInfo
-                                    {
-                                        Init = cu.ulInitialCount,
-                                        currency = cur,
-                                        Count = cu.ulCount,
-                                        Presented = cu.ulPresentedCount,
-                                        UnitId = logicalUnitId,
-                                        Denomination = (int)denomValue
-                                    });
-                                }
+                                    Init = cu.ulInitialCount,
+                                    currency = cur,
+                                    Count = cu.ulCount,
+                                    Presented = 0,
+                                    UnitId = GetUniqueLogicalUnitId(unitId, command.Cashunit),
+                                    Denomination = (int)cu.ulValues
+                                });
                             }
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[CDM_CU] EXCEPTION {ex.GetType().Name}: {ex.Message}");
+                }
                 finally
                 {
-                    if (pRes != IntPtr.Zero) XfsApi.WFSFreeResult(pRes);
+                    if (pRes != IntPtr.Zero)
+                    {
+                        try { XfsApi.WFSFreeResult(pRes); } catch { }
+                        pRes = IntPtr.Zero;
+                    }
                 }
             }
-            else
-            {
-                command.Cashunit = new List<CashUnitInfo>();
-            }
+
+            // ==================== IDC ====================
             if (OpenModuleService.EnsureIdcOpen())
             {
-                if (IDC.TryGetStatus(OpenModuleService.hIdc, out var st))
+                if (IDC.TryGetStatus(OpenModuleService.hIdc, out var stIdc))
                 {
                     command.IdcStatus = new models.Module.IdcStatusDto
                     {
-                        Device = st.fwDevice,
-                        ChipPower = st.fwChipPower,
-                        Media = st.fwMedia,
-                        RetainBin = st.fwRetainBin,
-                        usCards = st.usCards,
+                        Device = stIdc.fwDevice,
+                        ChipPower = stIdc.fwChipPower,
+                        Media = stIdc.fwMedia,
+                        RetainBin = stIdc.fwRetainBin,
+                        usCards = stIdc.usCards,
                     };
-                    if (st.fwDevice != 0 && st.fwDevice != 6)
+                    if (stIdc.fwDevice != 0 && stIdc.fwDevice != 6) HaveError = true;
+                }
+            }
+
+            // ==================== PTR ====================
+            if (OpenModuleService.EnsurePtrOpen())
+                PrinterXFsLogic(ref HaveError, command);
+
+            // ==================== SIU ====================
+            if (OpenModuleService.EnsureSensorOpen())
+            {
+                const int WFS_SIU_OPERATORSWITCH = 0;      // fwSensors[0]
+                const int WFS_SIU_OPENCLOSE = 0;      // fwIndicators[0]
+                const ushort WFS_SIU_RUN = 0x0001;
+                const ushort WFS_SIU_OPEN = 0x0002;
+
+                WFSSIUSTATUS st;
+                if (TryGetInfo(OpenModuleService.hSiu, SIU.WFS_INF_SIU_STATUS, 10000, "SIU", out st, out hr))
+                {
+                    var sensors = st.fwSensors ?? new ushort[0];
+                    var indicators = st.fwIndicators ?? new ushort[0];
+
+                    ushort openClose = (indicators.Length > WFS_SIU_OPENCLOSE)
+                                            ? indicators[WFS_SIU_OPENCLOSE] : (ushort)0;
+                    ushort opSwitch = (sensors.Length > WFS_SIU_OPERATORSWITCH)
+                                     ? sensors[WFS_SIU_OPERATORSWITCH] : (ushort)0;
+
+                    bool isOpen = (openClose & WFS_SIU_OPEN) == WFS_SIU_OPEN;
+
+                    // اگر SP کلید اپراتور را پشتیبانی نکند (NOT_AVAILABLE = 0)،
+                    // به وضعیت OPENCLOSE تکیه کن — Hyosung اینطور است.
+                    bool switchSupported = opSwitch != 0;
+                    bool isRun = switchSupported
+                               ? (opSwitch & WFS_SIU_RUN) == WFS_SIU_RUN
+                               : isOpen;
+
+                    bool canConnect = PortChecker.CanConnect(HostCheckIp, HostCheckPort);
+
+                    if (isRun && canConnect) InService = true;
+                    else if (isRun && !canConnect) offline = true;
+                    else if (!isRun && canConnect) online = true;
+
+                    command.SiuStatus = new SiuStatusModel
                     {
-                        HaveError = true;
-                    }
-                    // Console.WriteLine($"IDC Device={MapDev(st.fwDevice)}  Media={st.fwMedia}  RetainBin={st.fwRetainBin}  CardsRetained={st.usCards}  ChipPower={st.fwChipPower}");
+                        Device = st.fwDevice,
+                        Doors = st.fwDoors ?? new ushort[0],
+                        Auxiliaries = st.fwAuxiliaries ?? new ushort[0],
+                        GuidLights = st.fwGuidLights ?? new ushort[0],
+                        Indicators = indicators,
+                    };
+                }
+                else if (OpenModuleService.IsFatalServiceError(hr))
+                {
+                    OpenModuleService.InvalidateSensors();
+                }
+            }
+
+            // ==================== CAMERA ====================
+            if (OpenModuleService.EnsureCameraOpen())
+            {
+                CAM.WFSCAMSTATUS st;
+                if (TryGetInfo(OpenModuleService.hCam, CAM.WFS_INF_CAM_STATUS, 10000, "CAM", out st, out hr))
+                {
+                    command.CameraStatus = new CameraStatusDto
+                    {
+                        Device = st.fwDevice,
+                        AntiFraudModule =0,
+                        Detailes = new List<CameradetailDto>
+                        {
+                            PrintCamLine(st, CAM.WFS_CAM_ROOM,     "ROOM    "),
+                            PrintCamLine(st, CAM.WFS_CAM_PERSON,   "PERSON  "),
+                            PrintCamLine(st, CAM.WFS_CAM_EXITSLOT, "EXITSLOT"),
+                        }
+                    };
+                }
+                else if (OpenModuleService.IsFatalServiceError(hr))
+                {
+                    OpenModuleService.InvalidateCamera();
+                }
+            }
+
+            // ==================== PIN ====================
+            if (OpenModuleService.EnsurePinOpen())
+            {
+                PIN.WFSPINSTATUS st;
+                if (TryGetInfo(OpenModuleService.hPin, PIN.WFS_INF_PIN_STATUS, 10000, "PIN", out st, out hr))
+                {
+                    command.PinStatus = new PinStatusDto { Device = st.fwDevice };
+                    if (st.fwDevice != 0 && st.fwDevice != 6) PinEror = true;
                 }
                 else
                 {
-                    command.IdcStatus = new models.Module.IdcStatusDto
-                    {
-                        Device = 0,
-                        ChipPower = 0,
-                        Media = 0,
-                        RetainBin = 0,
-                        usCards = 0,
-                    };
+                    OpenModuleService.InvalidatePin();
                 }
-                 
-            }
-            else
-            {
-                command.IdcStatus = new models.Module.IdcStatusDto
-                {
-                    Device = 0,
-                    ChipPower = 0,
-                    Media = 0,
-                    RetainBin = 0,
-                    usCards = 0,
-                };
             }
 
-            if (OpenModuleService.EnsurePtrOpen())
+            // ==================== MODE ====================
+            bool paperWarn = command.ptrStatus.Paper == PaperStatus.Low
+                          || command.ptrStatus.Paper == PaperStatus.Empty;
+
+            long totalMoney = command.Cashunit.Sum(x => (long)x.Count * x.Denomination);
+            bool moneyWarn = totalMoney < MoneyWarningThreshold;
+
+            if (HaveError) command.Mode = DeviceMode.Error;
+            else if (paperWarn) command.Mode = DeviceMode.warning_paper;   // کاغذ اولویت بالاتر
+            else if (moneyWarn) command.Mode = DeviceMode.warning_Money;
+            else if (PinEror) command.Mode = DeviceMode.Supervisor;
+            else if (InService) command.Mode = DeviceMode.InService;
+            else if (offline) command.Mode = DeviceMode.Offline;
+            else if (online) command.Mode = DeviceMode.Online;
+            else command.Mode = DeviceMode.Supervisor;
+
+            return command;
+        }
+        /// <summary>
+        /// یک WFSGetInfo سینک را امن اجرا می‌کند و ساختار خروجی را برمی‌گرداند.
+        /// در صورت هر خطایی false برمی‌گرداند و بافر را حتماً آزاد می‌کند.
+        /// </summary>
+        private static bool TryGetInfo<T>(ushort hService, int category, int timeoutMs,
+                                          string tag, out T value, out int hr) where T : struct
+        {
+            value = default(T);
+            hr = XfsErrors.WFS_SUCCESS;
+            IntPtr pRes = IntPtr.Zero;
+
+            if (hService == 0)
             {
-                IntPtr pRes = IntPtr.Zero;
-                PrinterXFsLogic(ref HaveError, command, ref pRes);
+                hr = XfsErrors.WFS_ERR_INVALID_HSERVICE;
+                Console.WriteLine($"[{tag}] handle=0, skip");
+                return false;
             }
-            else
+
+            try
             {
+                hr = XfsApi.WFSGetInfo(hService, category, IntPtr.Zero, timeoutMs, ref pRes);
+
+                if (hr != XfsErrors.WFS_SUCCESS || pRes == IntPtr.Zero)
+                {
+                    Console.WriteLine($"[{tag}] WFSGetInfo failed hr={hr}");
+                    return false;
+                }
+
+                var res = (WFSRESULT)Marshal.PtrToStructure(pRes, typeof(WFSRESULT));
+
+                if (res.hResult != XfsErrors.WFS_SUCCESS || res.lpBuffer == IntPtr.Zero)
+                {
+                    hr = res.hResult;
+                    Console.WriteLine($"[{tag}] result hResult={res.hResult}");
+                    return false;
+                }
+
+                value = (T)Marshal.PtrToStructure(res.lpBuffer, typeof(T));
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{tag}] EXCEPTION {ex.GetType().Name}: {ex.Message}");
+                hr = XfsErrors.WFS_ERR_INTERNAL_ERROR;
+                return false;
+            }
+            finally
+            {
+                // فقط و فقط یک بار — و بعدش صفر می‌شود
+                if (pRes != IntPtr.Zero)
+                {
+                    try { XfsApi.WFSFreeResult(pRes); } catch { }
+                    pRes = IntPtr.Zero;
+                }
+            }
+        }
+
+        private static void PrinterXFsLogic(ref bool HaveError, DeviceMuduleStatusCommand command)
+        {
+            PTR.WFSPTRSTATUS st;
+            int hr;
+
+            if (!TryGetInfo(OpenModuleService.hPtr, PTR.WFS_INF_PTR_STATUS, 10000, "PTR", out st, out hr))
+            {
+                if (OpenModuleService.IsFatalServiceError(hr))
+                    OpenModuleService.InvalidatePtr();
+
                 command.ptrStatus = new PtrStatusDto
                 {
                     Device = 0,
@@ -327,270 +433,20 @@ namespace NaraEyesAgent.Core.XFSServices
                     Toner = 0,
                     Paper = PaperStatus.Unknown
                 };
+                return;
             }
 
-            if (OpenModuleService.EnsureSensorOpen())
+            command.ptrStatus = new models.Module.PtrStatusDto
             {
-                const int WFS_SIU_OPERATORSWITCH = 0;  // fwSensors[0]
-                const int WFS_SIU_OPENCLOSE = 0;
-                const ushort WFS_SIU_RUN = 0x0001;
-                const ushort WFS_SIU_MAINTENANCE = 0x0002; // اگر خواستی بعداً گزارش جدا بده
-                const ushort WFS_SIU_SUPERVISOR = 0x0004; // اگر خواستی بعداً گزارش جدا بده
-                const ushort WFS_SIU_CLOSED = 0x0001;
-                const ushort WFS_SIU_OPEN = 0x0002;
+                Device = st.fwDevice,
+                Media = st.fwMedia,
+                Ink = st.fwInk,
+                Toner = st.fwToner,
+                Paper = GetOverallPaperStatus(st.fwPaper)
+            };
 
-                IntPtr pRes = IntPtr.Zero;
-                try
-                {
-
-
-
-                    XfsApi.WFSGetInfo(OpenModuleService.hSiu, SIU.WFS_INF_SIU_STATUS, IntPtr.Zero, 10000, ref pRes);
-                    var res = (WFSRESULT)Marshal.PtrToStructure(pRes, typeof(WFSRESULT));
-                    if (res.hResult != WFS_SUCCESS || res.lpBuffer == IntPtr.Zero)
-                    {
-                        if (OpenModuleService.IsFatalServiceError(res.hResult))
-                        {
-                            OpenModuleService.InvalidateSensors();
-                        }
-                    }
-                    else
-                    {
-                        var st = (WFSSIUSTATUS)Marshal.PtrToStructure(res.lpBuffer, typeof(WFSSIUSTATUS));
-                        var sensors = st.fwSensors;
-                        var indicators = st.fwIndicators;
-                        ushort opSwitch = (sensors.Length > WFS_SIU_OPERATORSWITCH) ? sensors[WFS_SIU_OPERATORSWITCH] : (ushort)0;
-                        ushort openClose = (indicators.Length > WFS_SIU_OPENCLOSE) ? indicators[WFS_SIU_OPENCLOSE] : (ushort)0;
-                        bool isRun = (opSwitch & WFS_SIU_RUN) == WFS_SIU_RUN;
-                        bool isOpen = (openClose & WFS_SIU_OPEN) == WFS_SIU_OPEN;
-
-                        string siuMode = (isRun && isOpen) ? "inservice" : "outofService";
-                        var canConnect = PortChecker.CanConnect("10.119.254.69", 8001);
-                        if (isRun && canConnect)
-                        {
-                            inserviseSituation = true;
-                            InService = true;
-                        }
-                        else if (isRun && !canConnect)
-                        {
-                            offline = true;
-                        }
-                        else if (!isRun && canConnect)
-                        {
-                            online = true;
-                        }
-                        else
-                        {
-                            outOfService = true;
-                        }
-
-
-                        command.SiuStatus = new SiuStatusModel
-                        {
-                            Device = st.fwDevice,
-                            Doors = st.fwDoors,
-                            Auxiliaries = st.fwAuxiliaries,
-                            GuidLights = st.fwGuidLights,
-                            Indicators = st.fwIndicators,
-                        };
-                    }
-                }
-                catch { }
-                finally
-                {
-                    if (pRes != IntPtr.Zero) XfsApi.WFSFreeResult(pRes);
-
-                }
-            }
-            else
-            {
-                command.SiuStatus = new SiuStatusModel
-                {
-                    Device = 0,
-                    Doors = new ushort[0],
-                    Auxiliaries = new ushort[0],
-                    GuidLights = new ushort[0],
-                    Indicators = new ushort[0]
-                };
-            }
-
-            if (OpenModuleService.EnsureCameraOpen())
-            {
-                IntPtr pRes = IntPtr.Zero;
-                XfsApi.WFSGetInfo(OpenModuleService.hCam, CAM.WFS_INF_CAM_STATUS, IntPtr.Zero, 10000, ref pRes);
-
-                try
-                {
-                    var res = (WFSRESULT)Marshal.PtrToStructure(pRes, typeof(WFSRESULT));
-                    if (res.hResult != WFS_SUCCESS || res.lpBuffer == IntPtr.Zero)
-                    {
-                        if (OpenModuleService.IsFatalServiceError(res.hResult))
-                        {
-                            OpenModuleService.InvalidateCamera();
-                        }
-                    }
-                    else
-                    {
-
-                        var st = (CAM.WFSCAMSTATUS)Marshal.PtrToStructure(res.lpBuffer, typeof(CAM.WFSCAMSTATUS));
-                        command.CameraStatus = new CameraStatusDto
-                        {
-                            Device = st.fwDevice,
-                            AntiFraudModule = st.wAntiFraudModule,
-                            Detailes = new List<CameradetailDto>
-                        {
-                               PrintCamLine(st, CAM.WFS_CAM_ROOM, "ROOM    "),
-                    PrintCamLine(st, CAM.WFS_CAM_PERSON, "PERSON  "),
-                    PrintCamLine(st, CAM.WFS_CAM_EXITSLOT, "EXITSLOT"),
-                        }
-                        };
-                    }
-                   
-
-
-
-                }
-                finally
-                {
-                    if (pRes != IntPtr.Zero) XfsApi.WFSFreeResult(pRes);
-                }
-            }
-            if (OpenModuleService.EnsurePinOpen())
-            {
-                IntPtr pRes = IntPtr.Zero;
-        
-
-                try
-                {
-                    XfsApi.WFSGetInfo(OpenModuleService.hPin, PIN.WFS_INF_PIN_STATUS, IntPtr.Zero, 10000, ref pRes);
-                    var res = (WFSRESULT)Marshal.PtrToStructure(pRes, typeof(WFSRESULT));
-                    if (res.hResult != WFS_SUCCESS || res.lpBuffer == IntPtr.Zero)
-                    {
-                        OpenModuleService.InvalidatePin();
-                    }
-                    else
-                    {
-
-                        var st = (PIN.WFSPINSTATUS)Marshal.PtrToStructure(res.lpBuffer, typeof(PIN.WFSPINSTATUS));
-                        //  Console.WriteLine($"PIN Device={MapDev(st.fwDevice)}");
-                        command.PinStatus = new PinStatusDto { Device = st.fwDevice };
-                        if (st.fwDevice != 0 && st.fwDevice != 6)
-                        {
-                            PinEror = true;
-                            outOfService = true;
-                        }
-                    }
-                }
-                finally
-                {
-                    if (pRes != IntPtr.Zero) XfsApi.WFSFreeResult(pRes);
-                }
-
-            }
-
-            if (command.ptrStatus.Paper == PaperStatus.Low || command.ptrStatus.Paper == PaperStatus.Empty)
-            {
-                command.Mode = DeviceMode.warning_paper;
-            }
-            var haveSummationMoney = command.Cashunit.Sum(x =>( x.Count * x.Denomination));
-            //Console.WriteLine($"mablagh= {haveSummationMoney}");
-            if (haveSummationMoney < 20_000_000)
-            {
-                command.Mode = DeviceMode.warning_Money;
-            }
-
-            if (HaveError)
-            {
-                command.Mode = DeviceMode.Error;
-            }
-            else if (command.Mode== DeviceMode.warning_paper)
-            {
-                command.Mode = DeviceMode.warning_paper;
-            }
-            else if (command.Mode == DeviceMode.warning_Money)
-            {
-                command.Mode = DeviceMode.warning_Money;
-            }
-            else if (PinEror)
-            {
-
-                command.Mode = DeviceMode.Supervisor;
-            }
-            else if (InService)
-            {
-                command.Mode = DeviceMode.InService;
-            }
-            else if (offline)
-            {
-                command.Mode = DeviceMode.Offline;
-            }
-            else if (online)
-            {
-                command.Mode = DeviceMode.Online;
-            }
-            else
-            {
-
-                command.Mode = DeviceMode.Supervisor;
-            }
-
-            return command;
-        }
-
-        private static void PrinterXFsLogic(ref bool HaveError, DeviceMuduleStatusCommand command, ref IntPtr pRes)
-        {
-            try
-            {
-                XfsApi.WFSGetInfo(OpenModuleService.hPtr, PTR.WFS_INF_PTR_STATUS, IntPtr.Zero, 10000, ref pRes);
-
-                var res = (WFSRESULT)Marshal.PtrToStructure(pRes, typeof(WFSRESULT));
-                if (res.hResult != WFS_SUCCESS || res.lpBuffer == IntPtr.Zero)
-                {
-                    Console.WriteLine($"PTR STATUS failed: 0x{res.hResult:X}");
-
-                    if (OpenModuleService.IsFatalServiceError(res.hResult))
-                    {
-                        OpenModuleService.InvalidatePtr();
-                    }
-
-
-                    command.ptrStatus = new PtrStatusDto
-                    {
-                        Device = 0,
-                        Media = 0,
-                        Ink = 0,
-                        Toner = 0,
-                        Paper = PaperStatus.Unknown
-                    };
-                }
-                else
-                {
-                    var st = (PTR.WFSPTRSTATUS)Marshal.PtrToStructure(res.lpBuffer, typeof(PTR.WFSPTRSTATUS));
-                    var paperStatus = GetOverallPaperStatus(st.fwPaper);
-                    command.ptrStatus = new models.Module.PtrStatusDto
-                    {
-                        Device = st.fwDevice,
-                        Media = st.fwMedia,
-                        Ink = st.fwInk,
-                        Toner = st.fwToner,
-                        Paper = paperStatus
-                    };
-                    //Console.WriteLine($"printer status is : {st.fwDevice}");
-                    if (st.fwDevice != 0 && st.fwDevice != 6)
-                    {
-                        HaveError = true;
-                    }
-                    XfsApi.WFSFreeResult(pRes);
-                }
-            }
-            catch
-            {
-
-            }
-            finally
-            {
-                if (pRes != IntPtr.Zero) XfsApi.WFSFreeResult(pRes);
-            }
+            if (st.fwDevice != 0 && st.fwDevice != 6)
+                HaveError = true;
         }
 
         static string PtrToAnsi(IntPtr p) => p == IntPtr.Zero ? "" : (Marshal.PtrToStringAnsi(p) ?? "");

@@ -1,6 +1,9 @@
-﻿public sealed class AgentConsole
+﻿using System.Runtime.InteropServices;
+
+public sealed class AgentConsole
 {
     #region Dependencies
+    private DateTime _lastWsRetry = DateTime.MinValue;
     private Task? _journalThread;
     private Task? _pollThread;
     private Task? _metricsThread;
@@ -132,18 +135,23 @@
         _stopped.TrySetResult();
     }
 
-    private async Task WinMsgPump(CancellationToken token)
+    private void WinMsgPump(CancellationToken token)
     {
         try
         {
-            // فقط یک‌بار باز/رجیستر کن
             OpenModuleService.openAllModulesOnce();
 
-            // حلقه پیام؛ لازمه تا WndProc ایونت‌ها را بگیره
+            // حلقه‌ی پیام واقعی روی همین ترد STA.
+            // GetMessage تا رسیدن پیام بلاک می‌شود (بدون مصرف CPU).
             while (!token.IsCancellationRequested)
             {
-                System.Windows.Forms.Application.DoEvents();
-              await Task.Delay(25, token);
+                NativeMessage msg;
+                int r = GetMessage(out msg, IntPtr.Zero, 0, 0);
+
+                if (r == 0 || r == -1) break;   // WM_QUIT یا خطا
+
+                TranslateMessage(ref msg);
+                DispatchMessage(ref msg);
             }
         }
         catch (Exception ex)
@@ -155,6 +163,30 @@
             try { OpenModuleService.CloseAllModules(); } catch { }
         }
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMessage
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public int pt_x;
+        public int pt_y;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern int GetMessage(out NativeMessage lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool TranslateMessage(ref NativeMessage lpMsg);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern IntPtr DispatchMessage(ref NativeMessage lpMsg);
+
+    [DllImport("user32.dll")]
+    private static extern bool PostThreadMessage(uint idThread, uint Msg, IntPtr wParam, IntPtr lParam);
 
 
 
@@ -178,7 +210,15 @@
             {
               
                 PollResponse resp = null;
-
+                if (_wsClient != null && !_wsClient.IsConnected)
+                {
+                    if (DateTime.UtcNow - _lastWsRetry > TimeSpan.FromSeconds(60))
+                    {
+                        _lastWsRetry = DateTime.UtcNow;
+                        _wsConnected = await _wsClient.ConnectAsync(ip, ct);
+                        Info(_wsConnected ? "🔄 WebSocket reconnected" : "⏳ WebSocket still down, using HTTP");
+                    }
+                }
                 bool useWs = _wsClient != null && _wsClient.IsConnected && _wsConnected;
 
                 if (useWs)
@@ -841,37 +881,33 @@ Action action)
             if (!char.IsWhiteSpace(s[i])) return false;
         return true;
     }
-    private Task RunStaLoop(
-        Func<CancellationToken, Task> action)
+    private Task RunStaLoop(Action<CancellationToken> action)
     {
-        var tcs =
-            new TaskCompletionSource();
+        var tcs = new TaskCompletionSource();
 
-        var t =
-            new Thread(() =>
+        var t = new Thread(() =>
+        {
+            _pumpThreadId = GetCurrentThreadId();
+            try
             {
-                try
-                {
-                    action(_stop.Token)
-                        .GetAwaiter()
-                        .GetResult();
+                action(_stop.Token);
+                tcs.TrySetResult();
+            }
+            catch (Exception ex)
+            {
+                tcs.TrySetException(ex);
+            }
+        });
 
-                    tcs.SetResult();
-                }
-                catch (Exception ex)
-                {
-                    tcs.SetException(ex);
-                }
-            });
-
-        t.SetApartmentState(
-            ApartmentState.STA);
-
+        t.SetApartmentState(ApartmentState.STA);
         t.IsBackground = true;
-
         t.Start();
 
         return tcs.Task;
     }
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+    private volatile uint _pumpThreadId;
     #endregion
 }

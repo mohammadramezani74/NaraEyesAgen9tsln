@@ -4,8 +4,8 @@
 # =========================
 
 # ---------- سرور ----------
-ApiBase=https://atmon.sbank.ir/api
-PingTarget=https://atmon.sbank.ir/api
+ApiBase=https://localhost:44359/api
+PingTarget=https://localhost:44359/api
 
 # ---------- مسیرها ----------
 JournalPath=D:\ejournal
