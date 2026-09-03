@@ -38,6 +38,7 @@ public sealed class AgentWebSocketClient :
 
             _socket.Options.SetRequestHeader("User-Agent", "NaraEyesAgent9/1.0");
             _socket.Options.SetRequestHeader("X-Forwarded-For", deviceIp);
+            _socket.Options.SetRequestHeader("X-Agent-Key", "K7mQ2xV9pL4zR8nT6wY3cH5sD1fG0bA");
 
             using var cts = CancellationTokenSource
                 .CreateLinkedTokenSource(ct);

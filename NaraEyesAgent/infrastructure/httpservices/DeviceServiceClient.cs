@@ -72,6 +72,7 @@ public sealed class DeviceServiceClient : IDeviceServiceClient
         _http.DefaultRequestHeaders.UserAgent
             .ParseAdd(
                 "NaraEyesAgent9/1.0");
+        _http.DefaultRequestHeaders.Add("X-Agent-Key", "K7mQ2xV9pL4zR8nT6wY3cH5sD1fG0bA");
     }
 
     public async Task RegisterAsync(DeviceRegisterRequest request,CancellationToken ct)

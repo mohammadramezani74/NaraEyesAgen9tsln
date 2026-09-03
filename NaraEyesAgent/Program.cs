@@ -60,18 +60,35 @@ namespace NaraEyesAgent
             Assert("WFSPTRSTATUS", Marshal.SizeOf(typeof(PTR.WFSPTRSTATUS)), 52);
             Assert("WFSIDCSTATUS", Marshal.SizeOf(typeof(IDC.WFSIDCSTATUS)), 16);
             Assert("WFSPINSTATUS", Marshal.SizeOf(typeof(PIN.WFSPINSTATUS)), 8);
-            string exePath = System.Reflection.Assembly
-             .GetExecutingAssembly().Location;
+ 
             PreloadXfsManager();
+            string exePath = Environment.ProcessPath ?? "";
             try
             {
                 using (var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
                            @"SOFTWARE\Microsoft\Windows\CurrentVersion\Run", writable: true))
                 {
                     if (key != null)
-                        key.SetValue("NaraEyesAgent.exe", "\"" + exePath + "\"");
+                    {
+                        // پاکسازی ورودی‌های خراب نسخه‌های قبلی
+                        key.DeleteValue("NaraEyesAgent", throwOnMissingValue: false);
+                        key.DeleteValue("NaraEyesAgent.exe", throwOnMissingValue: false);
+
+                        if (!string.IsNullOrEmpty(exePath) &&
+                            exePath.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                        {
+                            key.SetValue("NaraEyesAgent", "\"" + exePath + "\"");
+                            Console.WriteLine("[BOOT] Autostart -> " + exePath);
+                        }
+                        else
+                        {
+                            Console.WriteLine("[WARN] مسیر اجرایی معتبر نیست — ثبت خودکار انجام نشد.");
+                        }
+                    }
                     else
+                    {
                         Console.WriteLine("[WARN] Run key not accessible — skipping autostart registration.");
+                    }
                 }
             }
             catch (Exception ex)

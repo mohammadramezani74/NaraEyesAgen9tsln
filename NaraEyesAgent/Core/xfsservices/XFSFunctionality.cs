@@ -34,33 +34,43 @@ namespace NaraEyesAgent.Core.XFSServices
         public static void ResteCdm()
         {
             var cdm = OpenModuleService.hCdm;
+
+            if (cdm == 0)
+            {
+                Console.WriteLine("[CDM] هندل باز نیست — ریست لغو شد.");
+                return;
+            }
+
+            IntPtr pLock = IntPtr.Zero;
+            int hrLock = XfsApi.WFSLock(cdm, 15000, ref pLock);
+
+            if (pLock != IntPtr.Zero)
+            {
+                try { XfsApi.WFSFreeResult(pLock); } catch { }
+                pLock = IntPtr.Zero;
+            }
+
+            if (hrLock != WFS_SUCCESS)
+            {
+                Console.WriteLine($"[CDM] قفل گرفته نشد hr={hrLock}" +
+                    (hrLock == -32 ? " (در اختیار اپلیکیشن دیگری) — ریست لغو شد." : " — ریست لغو شد."));
+                return;
+            }
+
+            IntPtr pRes = IntPtr.Zero;
             try
             {
-
-
-            
-                Console.WriteLine($"hcdm given {cdm}");
-                IntPtr pLock = IntPtr.Zero;
-                int hrLock = XfsApi.WFSLock(cdm, 15000, ref pLock);
-                if (hrLock == WFS_SUCCESS && pLock != IntPtr.Zero) XfsApi.WFSFreeResult(pLock);
-
-                IntPtr pRes = IntPtr.Zero;
                 int hr = XfsApi.WFSExecute(cdm, CDM.WFS_CMD_CDM_RESET, IntPtr.Zero, 60000, ref pRes);
-                if (hr != WFS_SUCCESS) Console.WriteLine($"WFSExecute(CDM_RESET) failed hr=0x{hr:X}");
-
-                //var res = Marshal.PtrToStructure<WFSRESULT>(pRes);
-                //Console.WriteLine(res.hResult == WFS_SUCCESS ? "CDM RESET: WFS_SUCCESS" : $"CDM RESET failed: 0x{res.hResult:X}");
-                XfsApi.WFSFreeResult(pRes);
-                XfsApi.WFSUnlock(cdm);
+                Console.WriteLine(hr == WFS_SUCCESS ? "[CDM] RESET موفق." : $"[CDM] RESET ناموفق hr={hr}");
             }
-            catch (Exception)
+            catch (Exception ex)
             {
-
-                throw;
+                Console.WriteLine($"[CDM] RESET استثنا: {ex.GetType().Name}: {ex.Message}");
             }
             finally
             {
-                XfsApi.WFSUnlock(cdm);   // حتماً در finally
+                if (pRes != IntPtr.Zero) { try { XfsApi.WFSFreeResult(pRes); } catch { } }
+                try { XfsApi.WFSUnlock(cdm); } catch { }
             }
         }
         public static void ReseteIDC()
@@ -90,7 +100,13 @@ namespace NaraEyesAgent.Core.XFSServices
 
             IntPtr pLock = IntPtr.Zero;
             int hrLock = XfsApi.WFSLock(hptr, 15000, ref pLock);
-            if (hrLock == WFS_SUCCESS && pLock != IntPtr.Zero) XfsApi.WFSFreeResult(pLock);
+            if (pLock != IntPtr.Zero) { try { XfsApi.WFSFreeResult(pLock); } catch { } }
+
+            if (hrLock != WFS_SUCCESS)
+            {
+                Console.WriteLine($"[PTR] قفل گرفته نشد hr={hrLock} — ریست لغو شد.");
+                return;
+            }
 
             // Build WFSPTRRESET
             var reset = new PTR.WFSPTRRESET { dwMediaControl = ctrl, usRetractBinNumber = bin };
@@ -304,6 +320,7 @@ namespace NaraEyesAgent.Core.XFSServices
             // ==================== CAMERA ====================
             if (OpenModuleService.EnsureCameraOpen())
             {
+                const int CAM_PERSON = 1;
                 CAM.WFSCAMSTATUS st;
                 if (TryGetInfo(OpenModuleService.hCam, CAM.WFS_INF_CAM_STATUS, 10000, "CAM", out st, out hr))
                 {
@@ -318,6 +335,31 @@ namespace NaraEyesAgent.Core.XFSServices
                             PrintCamLine(st, CAM.WFS_CAM_EXITSLOT, "EXITSLOT"),
                         }
                     };
+                }
+                if (st.fwDevice != 0 && st.fwDevice != 6)
+                {
+                    HaveError = true;
+                    Console.WriteLine($"[CAM] خطای ماژول دوربین fwDevice={st.fwDevice}");
+                }
+
+                if (st.fwCameras != null && st.fwCameras.Length > CAM_PERSON)
+                {
+                    ushort camState = st.fwCameras[CAM_PERSON];
+
+                    if (camState == 2)          // WFS_CAM_CAMINOP
+                    {
+                        HaveError = true;
+                        Console.WriteLine("[CAM] دوربین مشتری از کار افتاده (CAMINOP).");
+                    }
+                }
+
+                if (st.fwMedia != null && st.fwMedia.Length > CAM_PERSON)
+                {
+                    if (st.fwMedia[CAM_PERSON] == 2)   // WFS_CAM_MEDIAFULL
+                    {
+                        HaveError = true;
+                        Console.WriteLine("[CAM] حافظه دوربین مشتری پر است — عکس جدید ثبت نمی‌شود.");
+                    }
                 }
                 else if (OpenModuleService.IsFatalServiceError(hr))
                 {
@@ -342,7 +384,8 @@ namespace NaraEyesAgent.Core.XFSServices
 
             // ==================== MODE ====================
             bool paperWarn = command.ptrStatus.Paper == PaperStatus.Low
-                          || command.ptrStatus.Paper == PaperStatus.Empty;
+                                     || command.ptrStatus.Paper == PaperStatus.Empty
+                                     || command.ptrStatus.Paper == PaperStatus.Jammed;
 
             long totalMoney = command.Cashunit.Sum(x => (long)x.Count * x.Denomination);
             bool moneyWarn = totalMoney < MoneyWarningThreshold;
@@ -447,6 +490,13 @@ namespace NaraEyesAgent.Core.XFSServices
 
             if (st.fwDevice != 0 && st.fwDevice != 6)
                 HaveError = true;
+            var paper = command.ptrStatus.Paper;
+
+            if (paper == PaperStatus.Jammed)
+            {
+                HaveError = true;
+                Console.WriteLine("[PTR] کاغذ گیر کرده است.");
+            }
         }
 
         static string PtrToAnsi(IntPtr p) => p == IntPtr.Zero ? "" : (Marshal.PtrToStringAnsi(p) ?? "");
