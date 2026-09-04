@@ -13,7 +13,8 @@ public sealed class AgentConsole
     private readonly TaskCompletionSource _stopped =
         new();
 
-    private readonly Random _rnd = new Random();
+    private readonly Random _rnd = new Random(
+    Environment.TickCount ^ Environment.ProcessId ^ Environment.MachineName.GetHashCode());
     private volatile int _metricsIntervalSec = 180;
     private const int _metricsJitterSec = 60;
     private const int _ejournalMaxJitterMinutes = 30;
@@ -33,6 +34,7 @@ public sealed class AgentConsole
     private readonly SemaphoreSlim _cdmLock = new SemaphoreSlim(1, 1);
     private readonly SemaphoreSlim _idcLock = new SemaphoreSlim(1, 1);
     private readonly SemaphoreSlim _printerLock = new SemaphoreSlim(1, 1);
+    private int _pollFailCount = 0;
     public int _terminalCode { get; set; }
  
     public AgentConsole(Logger Log)
@@ -249,19 +251,31 @@ public sealed class AgentConsole
                     }
                 }
 
-                await Task.Delay(5000,ct);
+                _pollFailCount = 0;                                   // موفق بود
+                await Task.Delay(5000 + _rnd.Next(0, 4000), ct);
             }
             catch (TimeoutException)
             {
-        
+                // long-poll که بدون پاسخ تمام شده — طبیعی است، خطا نیست.
+                // ولی کمی تأخیر تصادفی بگذار تا چرخه‌ها هم‌فاز نشوند.
+                await Task.Delay(500 + _rnd.Next(0, 1500), ct);
             }
             catch (Exception ex)
             {
                 Error(ex, "❌ poll loop error");
 
-             
-         
-               await Task.Delay(1000,ct); // backoff
+
+
+                _pollFailCount++;
+
+                // ۲، ۴، ۸، ۱۶، ۳۲، ۶۴ ثانیه — تا سقف ۶۰ ثانیه
+                int backoffMs = Math.Min(60_000,
+                    1000 * (int)Math.Pow(2, Math.Min(_pollFailCount, 6)));
+
+                int jitterMs = _rnd.Next(0, 3000);
+
+                Info($"⏳ تلاش ناموفق #{_pollFailCount} — {(backoffMs + jitterMs) / 1000} ثانیه صبر");
+                await Task.Delay(backoffMs + jitterMs, ct);
             }
         }
 
