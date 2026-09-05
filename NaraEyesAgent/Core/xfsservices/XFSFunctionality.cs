@@ -394,7 +394,20 @@ namespace NaraEyesAgent.Core.XFSServices
 
             long totalMoney = command.Cashunit.Sum(x => (long)x.Count * x.Denomination);
             bool moneyWarn = totalMoney < MoneyWarningThreshold;
-
+            // ⚠️ IsInservice عمداً از Mode مستقل است.
+            //
+            // داشبورد می‌پرسد «چند دستگاه خطا دارند ولی هنوز سرویس
+            // می‌دهند؟» و این سؤال با Mode قابل جواب نیست، چون Mode یک
+            // مقدار واحد است: دستگاهی که Mode=Error دارد، Mode=InService
+            // ندارد.
+            //
+            // پس IsInservice یعنی «کلید اپراتور RUN است و سوییچ سپنتا در
+            // دسترس است» — صرف‌نظر از اینکه ماژولی خراب هست یا نه.
+            //
+            // این خط از ابتدا جا افتاده بود و Device.InService روی هر ۳۰۰
+            // دستگاه همیشه false بود، یعنی هر چهار عدد داشبورد غلط
+            // نمایش داده می‌شد.
+            command.IsInservice = InService;
             if (HaveError) command.Mode = DeviceMode.Error;
             else if (paperWarn) command.Mode = DeviceMode.warning_paper;   // کاغذ اولویت بالاتر
             else if (moneyWarn) command.Mode = DeviceMode.warning_Money;
