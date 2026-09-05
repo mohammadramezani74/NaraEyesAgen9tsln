@@ -13,6 +13,11 @@ EJournalRoot=D:\ejournal
 EJournalFallback=D:\ejournal
 LogDir=C:\ProgramData\NaraEyes\logs
 TerminalCode=0
+ArmaghanLogPath=C:\Program Files\Armaghan\log
+SepantaLogPath=C:\Program Files\Sepanta Agent\log
+ImageArchivePath=C:\Program Files\Armaghan\ImageArchive
+FileTransferMaxMb=40
+IncludeBoundaryArchive=true
 
 # ---------- لاگ ----------
 LogLevel=Info           ; Trace|Debug|Info|Warn|Error

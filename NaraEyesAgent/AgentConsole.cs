@@ -530,23 +530,33 @@ public sealed class AgentConsole
 
                         case CommandsType.EJournal:
                             {
-                                string startYmd = !IsNullOrWhiteSpace(cmd.StartDate) ? cmd.StartDate : DateTime.Now.ToString("yyyyMMdd");
-                                string endYmd = !IsNullOrWhiteSpace(cmd.EndDate) ? cmd.EndDate : startYmd;
+                                string startYmd = !IsNullOrWhiteSpace(cmd.StartDate)
+                                    ? cmd.StartDate
+                                    : DateTime.Now.ToString("yyyyMMdd");
+                                string endYmd = !IsNullOrWhiteSpace(cmd.EndDate)
+                                    ? cmd.EndDate
+                                    : startYmd;
 
-                                string ct, fn;
-                                var journal = new GetJournals(_journalPath);
-                                byte[] data = journal.Collect(startYmd, endYmd, out ct, out fn);
+                                // منبع از Payload می‌آید. اگر سرور قدیمی باشد و
+                                // Payload منبع نداشته باشد، مقدار صفر یعنی
+                                // LegacyEjournal — دقیقاً رفتار قبلی.
+                                var req = SafeDeserialize<FileRequestPayload>(cmd.Payload);
+                                var source = (FileSourceType)(req != null ? req.Source : 0);
+
+                                var collector = new FileCollector(_config);
+                                FileCollectResult res = collector.Collect(source, startYmd, endYmd);
 
                                 var ack = new JournalAckPayload
                                 {
                                     CommandId = cmd.Id,
-                                    DataBase64 = (data != null && data.Length > 0) ? Convert.ToBase64String(data) : null,
-                                    ContentType = (data != null && data.Length > 0) ? ct : "text/plain",
-                                    FileName = (data != null && data.Length > 0) ? fn : "no-journal.txt",
-                                    Message = (data != null && data.Length > 0) ? null : "No journal files found"
+                                    DataBase64 = res.HasData ? Convert.ToBase64String(res.Data) : null,
+                                    ContentType = res.ContentType,
+                                    FileName = res.FileName,
+                                    Message = res.Message
                                 };
+
                                 reports.Add(MakeMsg(ip, MessageType.EJournal, ack));
-                                done = true;  // موفقیت، از حلقه خارج شو
+                                done = true;
                                 break;
                             }
 
