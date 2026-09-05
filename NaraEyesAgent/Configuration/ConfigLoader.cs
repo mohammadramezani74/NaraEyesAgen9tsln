@@ -133,6 +133,15 @@ namespace NaraEyesAgent.Configuration
                 case "proxyuser": c.ProxyUser = v; break;
                 case "proxypass": c.ProxyPass = v; break;
 
+                case "armaghanlogpath": c.ArmaghanLogPath = v; break;
+                case "sepantalogpath": c.SepantaLogPath = v; break;
+                case "imagearchivepath": c.ImageArchivePath = v; break;
+                case "filetransfermaxmb": c.FileTransferMaxMb = ToInt(v, c.FileTransferMaxMb); break;
+                case "includeboundaryarchive":
+                    c.IncludeBoundaryArchive = !string.Equals(v.Trim(), "false",
+                        StringComparison.OrdinalIgnoreCase);
+                    break;
+
                 // --- Security ---
                 case "mtls": c.mTLS = ToBool(v); break;
                 case "enrollmenttoken": c.EnrollmentToken = v; break;

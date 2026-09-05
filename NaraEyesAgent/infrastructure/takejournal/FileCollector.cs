@@ -220,7 +220,8 @@ namespace NaraEyesAgent.Infrastructure.TakeJournal
             }
 
             if (picked.Count == 0 && liveBytes == null)
-                return Fail("no-file.txt", "در این بازه فایلی روی دستگاه یافت نشد.");
+                return NothingFound(root,
+                        $"در بازه‌ی {startYmd} تا {endYmd} فایلی یافت نشد.");
 
             // ---- سقف حجم ----
             long total = liveBytes == null ? 0L : liveBytes.LongLength;
@@ -310,8 +311,8 @@ namespace NaraEyesAgent.Infrastructure.TakeJournal
             picked.Sort((a, b) => CompareOrdinal(a.Name, b.Name));
 
             if (picked.Count == 0)
-                return Fail("no-file.txt",
-                    $"تصویری در بازه‌ی {startJ} تا {endJ} (شمسی) یافت نشد.");
+                return NothingFound(_imageArchivePath,
+                  $"تصویری در بازه‌ی {startJ} تا {endJ} (شمسی) یافت نشد.");
 
             // ---- سقف حجم ----
             var sizes = new List<KeyValuePair<string, long>>();
@@ -381,7 +382,8 @@ namespace NaraEyesAgent.Infrastructure.TakeJournal
             }
 
             if (picked.Count == 0)
-                return Fail("no-journal.txt", "ژورنالی در این بازه یافت نشد.");
+                if (picked.Count == 0)
+                    return NothingFound(_legacyJournalPath, "ژورنالی در این بازه یافت نشد.");
 
             long total = 0;
             foreach (FileInfo f in picked) total += f.Length;
@@ -416,7 +418,38 @@ namespace NaraEyesAgent.Infrastructure.TakeJournal
         // =================================================================
         //  ساخت زیپ
         // =================================================================
+        /// <summary>
+        /// وقتی چیزی پیدا نشد، فهرست واقعی محتویات مسیر را هم برگردان.
+        ///
+        /// روی دستگاه بانک تفاوت بین «هیچی پیدا نشد» و «اینها آنجا بود ولی
+        /// با الگو نخواند» بین ده دقیقه و نصف روز است.
+        /// </summary>
+        private static FileCollectResult NothingFound(string root, string headline)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine(headline);
+            sb.AppendLine();
+            sb.AppendLine("مسیر: " + root);
+            sb.AppendLine();
+            sb.AppendLine("محتویات واقعی این مسیر (حداکثر ۴۰ مورد):");
 
+            try
+            {
+                var di = new DirectoryInfo(root);
+
+                foreach (DirectoryInfo d in di.GetDirectories("*", SearchOption.TopDirectoryOnly).Take(20))
+                    sb.AppendLine("  [پوشه] " + d.Name);
+
+                foreach (FileInfo f in di.GetFiles("*", SearchOption.TopDirectoryOnly).Take(20))
+                    sb.AppendLine("  [فایل] " + f.Name);
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("  خواندن مسیر ممکن نشد: " + ex.Message);
+            }
+
+            return Fail("no-file.txt", sb.ToString());
+        }
         private FileCollectResult BuildZip(string outName, Action<ZipFile> fill)
         {
             using (var ms = new MemoryStream())
