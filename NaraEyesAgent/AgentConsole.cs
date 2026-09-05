@@ -1,10 +1,12 @@
-﻿using System.Runtime.InteropServices;
+﻿using NaraEyesAgent.Infrastructure.Hardware;
+using System.Runtime.InteropServices;
 
 public sealed class AgentConsole
 {
     #region Dependencies
     private DateTime _lastWsRetry = DateTime.MinValue;
     private Task? _journalThread;
+    private Task? _hardwareThread;
     private Task? _pollThread;
     private Task? _metricsThread;
     private readonly CancellationTokenSource _stop =
@@ -109,6 +111,7 @@ public sealed class AgentConsole
         () => PollLoop(_stop.Token));
         _metricsThread = Task.Run(
         () => MetricsLoop(_stop.Token));
+        _hardwareThread = Task.Run(() => HardwareLoop(_stop.Token));
 
         _journalThread = Task.Run(() => JournalLoop(_stop.Token));
 
@@ -125,6 +128,7 @@ public sealed class AgentConsole
             _pollThread,
             _metricsThread,
             _journalThread,
+             _hardwareThread,
             _xfsMsgThread
             }
             .Where(x => x != null);
@@ -401,7 +405,75 @@ public sealed class AgentConsole
             //Error(ex, "❌ Daily EJ send failed");
         }
     }
+    // =================== HARDWARE LOOP ===================
 
+    /// <summary>
+    /// یک بار بعد از بالا آمدن، بعد هر ۶ ساعت.
+    ///
+    /// لحظه‌ی بالا آمدن مهم‌ترین است: کارشناس دستگاه را خاموش می‌کند،
+    /// قطعه را عوض می‌کند، روشن می‌کند. اولین boot بعد از تعویض
+    /// بلافاصله تشخیص می‌دهد.
+    ///
+    /// شش ساعت عمدی است. کوئری WMI روی این i5 ضعیف که ارمغان هم رویش
+    /// اجرا می‌شود چند صد میلی‌ثانیه می‌گیرد، و سخت‌افزار هر سه دقیقه
+    /// عوض نمی‌شود.
+    /// </summary>
+    private async Task HardwareLoop(CancellationToken ct)
+    {
+        // کمی صبر تا XFS و بقیه‌ی راه‌اندازی تمام شود
+        try { await Task.Delay(TimeSpan.FromSeconds(45), ct); }
+        catch (OperationCanceledException) { return; }
+
+        while (!ct.IsCancellationRequested)
+        {
+            await SendHardwareProfileOnce(ct);
+
+            try { await Task.Delay(TimeSpan.FromHours(6), ct); }
+            catch (OperationCanceledException) { break; }
+        }
+
+        Info("HardwareLoop exited.");
+    }
+
+    private async Task SendHardwareProfileOnce(CancellationToken ct)
+    {
+        try
+        {
+            var profile = HardwareInspector.Collect();
+
+            // ناقص یعنی نفرست.
+            //
+            // روی بردهای صنعتی گاهی WMI ناقص برمی‌گردد. اگر داده‌ی ناقص
+            // برود، سرور آن را «قطعه برداشته شد» تفسیر می‌کند و یک
+            // اختلال موقت WMI می‌تواند همزمان روی ده‌ها دستگاه آلارم
+            // بحرانی بزند. یک چرخه از دست رفتن خیلی بهتر است.
+            if (!profile.IsComplete)
+            {
+                Info("⚠️ پروفایل سخت‌افزار ناقص بود — ارسال نشد.");
+                return;
+            }
+
+            var ip = SafeGetLocalIPv4Cached();
+            var report = MakeMsg(ip, MessageType.HardwareProfile, profile);
+
+            await _deviceService.PollAsync(ip, new List<InBoxDeviceMessage> { report }, ct);
+
+            Info("📤 پروفایل سخت‌افزار ارسال شد — RAM={0}MB, CPU={1}, Disk={2}GB",
+                 profile.RamTotalMb,
+                 profile.CpuName,
+                 profile.DiskSizeBytes / 1000 / 1000 / 1000);
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                var err = new { Error = ex.Message, Time = DateTime.UtcNow, Kind = "HardwareProfile" };
+                var msg = MakeMsg(SafeGetLocalIPv4Cached(), MessageType.ErrorReport, err);
+                await _deviceService.PollAsync(_deviceIp, new List<InBoxDeviceMessage> { msg }, ct);
+            }
+            catch { }
+        }
+    }
 
     private async Task SendMetricsOnce(bool sendpollMetric = false, OutBoxDeviceMessage cmd = null)
     {

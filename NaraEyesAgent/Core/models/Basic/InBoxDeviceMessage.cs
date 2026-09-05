@@ -20,6 +20,8 @@ namespace NaraEyesAgent.Core.Models.Basic
         LogUpload = 7,
         EJournal = 8,
         FileUpload = 9,
-              Group =10
+              Group =10,
+        HardwareProfile = 11
+
     }
 }
