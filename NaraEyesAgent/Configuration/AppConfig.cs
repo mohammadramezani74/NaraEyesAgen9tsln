@@ -82,5 +82,10 @@
 
         public bool mTLS = false;
         public string EnrollmentToken = "";
+        /// <summary>اگر آخرین نوشته‌ی ژورنال از این قدیمی‌تر بود، به آن اعتماد نکن</summary>
+        public int ArmaghanStateMaxAgeMinutes = 30;
+
+        /// <summary>خاموش کردنش یعنی برگشت کامل به منطق SIU</summary>
+        public bool UseArmaghanJournalState = true;
     }
 }

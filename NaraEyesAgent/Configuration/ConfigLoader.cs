@@ -145,6 +145,12 @@ namespace NaraEyesAgent.Configuration
                 // --- Security ---
                 case "mtls": c.mTLS = ToBool(v); break;
                 case "enrollmenttoken": c.EnrollmentToken = v; break;
+                case "armaghanstatemaxageminutes":
+                    c.ArmaghanStateMaxAgeMinutes = ToInt(v, c.ArmaghanStateMaxAgeMinutes); break;
+                case "usearmaghanjournalstate":
+                    c.UseArmaghanJournalState = !string.Equals(v.Trim(), "false",
+                        StringComparison.OrdinalIgnoreCase);
+                    break;
 
                 default: break; // ناشناخته‌ها را نادیده بگیر
             }

@@ -3,6 +3,7 @@ using NaraEyesAgent.Core.models;
 using NaraEyesAgent.Core.models.Module;
 using NaraEyesAgent.Core.XFSPatterns.package;
 using NaraEyesAgent.infrastructure.Denomination;
+using NaraEyesAgent.Infrastructure.ArmaghanState;
 using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
@@ -31,6 +32,10 @@ namespace NaraEyesAgent.Core.XFSServices
         private const string HostCheckIp = "10.119.254.69";
         private const int HostCheckPort = 8001;
         private const long MoneyWarningThreshold = 20_000_000;
+        /// <summary>از Config.txt پر می‌شود — AgentConsole.LoadConfig</summary>
+        public static string ArmaghanLogPath = @"C:\Program Files\Armaghan\log";
+        public static int ArmaghanStateMaxAgeMinutes = 30;
+        public static bool UseArmaghanJournalState = true;
         public static void ResteCdm()
         {
             var cdm = OpenModuleService.hCdm;
@@ -143,7 +148,7 @@ namespace NaraEyesAgent.Core.XFSServices
             bool InService = false;
             bool online = false;
             bool offline = false;
-
+            bool canConnect = PortChecker.CanConnect(HostCheckIp, HostCheckPort);
             var command = new DeviceMuduleStatusCommand();
 
             // پیش‌فرض‌های امن — تا هیچ‌جای متد NullReference نگیریم
@@ -296,7 +301,7 @@ namespace NaraEyesAgent.Core.XFSServices
                                ? (opSwitch & WFS_SIU_RUN) == WFS_SIU_RUN
                                : isOpen;
 
-                    bool canConnect = PortChecker.CanConnect(HostCheckIp, HostCheckPort);
+
 
                     if (isRun && canConnect) InService = true;
                     else if (isRun && !canConnect) offline = true;
@@ -394,10 +399,41 @@ namespace NaraEyesAgent.Core.XFSServices
             else if (paperWarn) command.Mode = DeviceMode.warning_paper;   // کاغذ اولویت بالاتر
             else if (moneyWarn) command.Mode = DeviceMode.warning_Money;
             else if (PinEror) command.Mode = DeviceMode.Supervisor;
-            else if (InService) command.Mode = DeviceMode.InService;
-            else if (offline) command.Mode = DeviceMode.Offline;
-            else if (online) command.Mode = DeviceMode.Online;
-            else command.Mode = DeviceMode.Supervisor;
+            else
+            {
+                // ---- منبع ترجیحی: اعلام خود ارمغان ----
+                //
+                // فقط وقتی به اینجا می‌رسیم که هیچ خطا و هشداری نباشد،
+                // یعنی همان چیزی که توافق شد: خطا و هشدار اولویت دارند و
+                // در آن حالت اصلاً ژورنال خوانده نمی‌شود.
+                ArmaghanState? js = null;
+                string note = "";
+
+                if (UseArmaghanJournalState)
+                    js = AtmStateReader.TryGetState(
+                             ArmaghanLogPath, ArmaghanStateMaxAgeMinutes, out note);
+
+                if (js == ArmaghanState.InService)
+                {
+                    // ارمغان می‌گوید سرویس می‌دهد. اگر سوییچ سپنتا در
+                    // دسترس نباشد، تراکنش انجام نمی‌شود — پس Offline.
+                    command.Mode = canConnect ? DeviceMode.InService : DeviceMode.Offline;
+                }
+                else if (js == ArmaghanState.OutOfService)
+                {
+                    command.Mode = DeviceMode.Supervisor;
+                }
+                else
+                {
+                    // ژورنال مبهم بود → دقیقاً منطق قبلی، دست‌نخورده
+                    Console.WriteLine($"[ARMAGHAN] fallback به SIU — {note}");
+
+                    if (InService) command.Mode = DeviceMode.InService;
+                    else if (offline) command.Mode = DeviceMode.Offline;
+                    else if (online) command.Mode = DeviceMode.Online;
+                    else command.Mode = DeviceMode.Supervisor;
+                }
+            }
 
             return command;
         }

@@ -796,6 +796,9 @@ public sealed class AgentConsole
                 _apiBase = _config.ApiBase;
                 _pingTarget = string.IsNullOrEmpty(_config.PingTarget) ? _config.ApiBase : _config.PingTarget;
                 _journalPath = !string.IsNullOrEmpty(_config.JournalPath) ? _config.JournalPath : _config.EJournalFallback;
+                XFSFunctionality.ArmaghanLogPath = _config.ArmaghanLogPath;
+                XFSFunctionality.ArmaghanStateMaxAgeMinutes = _config.ArmaghanStateMaxAgeMinutes;
+                XFSFunctionality.UseArmaghanJournalState = _config.UseArmaghanJournalState;
                 _terminalCode = int.Parse(!string.IsNullOrEmpty(_config.TerminalCode) && _config.TerminalCode != "0" ? _config.TerminalCode : Random.Shared.Next(1433, 9999).ToString());
 
 
