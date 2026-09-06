@@ -77,8 +77,8 @@ namespace NaraEyesAgent.Infrastructure.Hardware
                         p.RamModules.Add(new RamModuleDto
                         {
                             CapacityMb = (int)(cap / 1024 / 1024),
-                            Manufacturer = Clean(mo["Manufacturer"]),
-                            PartNumber = Clean(mo["PartNumber"]),
+                            Manufacturer = CleanSerial(mo["Manufacturer"]),
+                            PartNumber = CleanSerial(mo["PartNumber"]),
                             SerialNumber = CleanSerial(mo["SerialNumber"]),
                             DeviceLocator = Clean(mo["DeviceLocator"]),
                             SpeedMhz = (int)ToLong(mo["Speed"]),
@@ -258,6 +258,20 @@ namespace NaraEyesAgent.Infrastructure.Hardware
             if (norm.Contains("NOTSPECIFIED")) return null;
             if (norm.Contains("SYSTEMSERIAL")) return null;
             if (norm == "NONE" || norm == "N/A" || norm == "NA") return null;
+
+            // بایوس AMI روی بردهای iEi جدول SPD را نمی‌خواند و به‌جای
+            // داده‌ی واقعی، نام فیلد را با شماره‌ی اسلات می‌نویسد:
+            // "Manufacturer3"، "SerNum3"، "PartNum3"، "AssetTagNum3".
+            //
+            // این‌ها روی هر ۳۰۰ دستگاه یکسان‌اند و با تعویض رم هم عوض
+            // نمی‌شوند، چون به اسلات وابسته‌اند نه به خود ماژول.
+            // پذیرفتنشان یعنی امضایی بسازیم که هرگز تغییر نمی‌کند و
+            // به‌ظاهر کار می‌کند — بدترین حالت ممکن.
+            if (norm.StartsWith("SERNUM")) return null;
+            if (norm.StartsWith("PARTNUM")) return null;
+            if (norm.StartsWith("MANUFACTURER")) return null;
+            if (norm.StartsWith("ASSETTAG")) return null;
+            if (norm.StartsWith("MODULE")) return null;
 
             return s;
         }
